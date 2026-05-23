@@ -5,28 +5,32 @@ import os
 import hashlib
 import pytz
 
-st.set_page_config(page_title="🏰龙城争霸🐉", layout="wide")
+st.set_page_config(page_title="城池占领游戏", layout="wide")
 
-# ========== 数据文件路径 ==========
-DATA_FILE = "city_data.json"
+# ========== 数据文件路径 - 适配 Streamlit Cloud ==========
+# Streamlit Cloud 的持久化目录是 /mount
+# 本地运行时使用当前目录
 if os.path.exists("/mount"):
-    DATA_FILE = "/mount/city_data.json"
+    DATA_DIR = "/mount"
+else:
+    DATA_DIR = os.path.dirname(os.path.abspath(__file__))
+
+DATA_FILE = os.path.join(DATA_DIR, "city_data.json")
+
+# 确保目录存在
+os.makedirs(DATA_DIR, exist_ok=True)
 
 # ========== 时区设置 ==========
 BEIJING_TZ = pytz.timezone('Asia/Shanghai')
 
-
 def beijing_now():
     return datetime.now(BEIJING_TZ).replace(tzinfo=None)
-
 
 # ========== 密码配置 ==========
 ADMIN_PASSWORD_HASH = hashlib.md5("admin123".encode()).hexdigest()
 
-
 def check_password(password):
     return hashlib.md5(password.encode()).hexdigest() == ADMIN_PASSWORD_HASH
-
 
 # 初始化状态
 if 'authenticated' not in st.session_state:
@@ -37,33 +41,23 @@ if 'selected' not in st.session_state:
     st.session_state.selected = set()
 if 'pending_cell' not in st.session_state:
     st.session_state.pending_cell = None
+if 'data_loaded' not in st.session_state:
+    st.session_state.data_loaded = False
 
 # 11x11 城池数据
 CITIES = [
-    ["1级资源北1区", "3级资源北2区", "1级资源北3区", "2级资源北4区", "安边镇", "3级资源北6区", "定羌寨", "2级资源北8区",
-     "2级资源东1区", "1级资源东2区", "1级资源东3区"],
-    ["1级资源北9区", "得胜寨", "4级资源北11区", "雄武镇", "4级资源北13区", "1级资源北14区", "4级资源北15区",
-     "1级资源北16区", "锁云关", "靖海镇", "3级资源东6区"],
-    ["2级资源北17区", "镇龙关", "3级资源北19区", "1级资源北20区", "5级资源北21区", "御龙北城", "2级资源北23区",
-     "3级资源北24区", "3级资源东7区", "4级资源东8区", "1级资源东9区"],
-    ["2级资源西1区", "1级资源西2区", "3及资源西3区", "7级资源外城1区", "6级资源外城2区", "5级资源外城3区",
-     "6级资源外城4区", "7级资源外城5区", "1级资源东10区", "澄海寨", "2级资源东12区"],
-    ["镇戎镇", "4级资源西5区", "2级资源西6区", "6级资源外城6区", "10级资源内城1区", "8级资源内城2区", "9级资源内城3区",
-     "6级资源外城7区", "5级资源东13区", "4级资源东14区", "横江镇"],
-    ["3级资源西7区", "1级资源西8区", "御龙西城", "5级资源外城8区", "8级资源内城4区", "天龙龙城", "8级资源内城5区",
-     "5级资源外城9区", "御龙东城", "1级资源东17区", "3级资源东18区"],
-    ["清平寨", "4级资源西11区", "5级资源西12区", "6级资源外城10区", "9级资源内城6区", "8级资源内城7区",
-     "10级资源内城8区", "6级资源外城11区", "2级资源东19区", "4级资源东20区", "平蛮寨"],
-    ["2级资源西13区", "怀远镇", "1级资源西15区", "7级资源外城12区", "6级资源外城13区", "5级资源外城14区",
-     "6级资源外城15区", "7级资源外城16区", "3级资源东22区", "1级资源东23区", "2级资源东24区"],
-    ["1级资源西16区", "4级资源西17区", "3级资源西18区", "2级资源南1区", "2级资源南2区", "御龙南镇", "5级资源南4区",
-     "1级资源南5区", "3级资源南6区", "断岳关", "2级资源南8区"],
-    ["3级资源西19区", "广信寨", "裂凤关", "1级资源南9区", "4级资源南10区", "1级资源南11区", "4级资源南12区", "安甫镇",
-     "4级资源南14区", "顺接寨", "1级资源南16区"],
-    ["1级资源西22区", "1级资源西23区", "2级资源西24区", "2级资源南17区", "石门镇", "3级资源南19区", "永宁寨",
-     "2级资源南21区", "1级资源南22区", "3级资源南23区", "1级资源南24区"]
+    ["1级资源北1区", "3级资源北2区", "1级资源北3区", "2级资源北4区", "安边镇", "3级资源北6区", "定羌寨", "2级资源北8区", "2级资源东1区", "1级资源东2区", "1级资源东3区"],
+    ["1级资源北9区", "得胜寨", "4级资源北11区", "雄武镇", "4级资源北13区", "1级资源北14区", "4级资源北15区", "1级资源北16区", "锁云关", "靖海镇", "3级资源东6区"],
+    ["2级资源北17区", "镇龙关", "3级资源北19区", "1级资源北20区", "5级资源北21区", "御龙北城", "2级资源北23区", "3级资源北24区", "3级资源东7区", "4级资源东8区", "1级资源东9区"],
+    ["2级资源西1区", "1级资源西2区", "3及资源西3区", "7级资源外城1区", "6级资源外城2区", "5级资源外城3区", "6级资源外城4区", "7级资源外城5区", "1级资源东10区", "澄海寨", "2级资源东12区"],
+    ["镇戎镇", "4级资源西5区", "2级资源西6区", "6级资源外城6区", "10级资源内城1区", "8级资源内城2区", "9级资源内城3区", "6级资源外城7区", "5级资源东13区", "4级资源东14区", "横江镇"],
+    ["3级资源西7区", "1级资源西8区", "御龙西城", "5级资源外城8区", "8级资源内城4区", "天龙龙城", "8级资源内城5区", "5级资源外城9区", "御龙东城", "1级资源东17区", "3级资源东18区"],
+    ["清平寨", "4级资源西11区", "5级资源西12区", "6级资源外城10区", "9级资源内城6区", "8级资源内城7区", "10级资源内城8区", "6级资源外城11区", "2级资源东19区", "4级资源东20区", "平蛮寨"],
+    ["2级资源西13区", "怀远镇", "1级资源西15区", "7级资源外城12区", "6级资源外城13区", "5级资源外城14区", "6级资源外城15区", "7级资源外城16区", "3级资源东22区", "1级资源东23区", "2级资源东24区"],
+    ["1级资源西16区", "4级资源西17区", "3级资源西18区", "2级资源南1区", "2级资源南2区", "御龙南镇", "5级资源南4区", "1级资源南5区", "3级资源南6区", "断岳关", "2级资源南8区"],
+    ["3级资源西19区", "广信寨", "裂凤关", "1级资源南9区", "4级资源南10区", "1级资源南11区", "4级资源南12区", "安甫镇", "4级资源南14区", "顺接寨", "1级资源南16区"],
+    ["1级资源西22区", "1级资源西23区", "2级资源西24区", "2级资源南17区", "石门镇", "3级资源南19区", "永宁寨", "2级资源南21区", "1级资源南22区", "3级资源南23区", "1级资源南24区"]
 ]
-
 
 def is_special(city):
     if not city or "外城" in city:
@@ -73,50 +67,57 @@ def is_special(city):
             return True
     return False
 
-
 def format_name(city):
     if not city:
         return "", ""
-    special_names = ["安边镇", "定羌寨", "得胜寨", "雄武镇", "锁云关", "靖海镇", "镇龙关",
-                     "御龙北城", "镇戎镇", "横江镇", "御龙西城", "天龙龙城", "御龙东城",
+    special_names = ["安边镇", "定羌寨", "得胜寨", "雄武镇", "锁云关", "靖海镇", "镇龙关", 
+                     "御龙北城", "镇戎镇", "横江镇", "御龙西城", "天龙龙城", "御龙东城", 
                      "清平寨", "平蛮寨", "怀远镇", "御龙南镇", "断岳关", "广信寨", "裂凤关",
                      "安甫镇", "顺接寨", "石门镇", "永宁寨"]
     if city in special_names:
         return city, ""
     if "级资源" in city:
         idx = city.find("级资源") + 2
-        return city[:idx + 1], city[idx + 1:]
+        return city[:idx+1], city[idx+1:]
     return city, ""
 
-
 def load_data():
+    """从文件加载数据"""
     if os.path.exists(DATA_FILE):
         try:
             with open(DATA_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
+                data = json.load(f)
+                print(f"成功加载数据，共 {len(data)} 条记录")
+                return data
         except Exception as e:
             print(f"加载数据失败: {e}")
             return {}
-    return {}
-
+    else:
+        print(f"数据文件不存在: {DATA_FILE}")
+        return {}
 
 def save_data(data):
+    """保存数据到文件"""
     try:
         with open(DATA_FILE, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
+        print(f"成功保存数据，共 {len(data)} 条记录")
         return True
     except Exception as e:
         print(f"保存数据失败: {e}")
         return False
 
+# 加载数据（每次页面加载时从文件读取）
+def init_data():
+    """初始化数据 - 从文件加载"""
+    loaded_data = load_data()
+    st.session_state.data = loaded_data if loaded_data else {}
+    st.session_state.data_loaded = True
+    print(f"数据初始化完成，当前数据: {st.session_state.data}")
 
-# 加载数据
-if 'data' not in st.session_state:
-    st.session_state.data = load_data()
-    if not st.session_state.data:
-        st.session_state.data = {}
-        save_data(st.session_state.data)
-
+# 如果数据还未加载，则加载
+if not st.session_state.data_loaded:
+    init_data()
 
 def get_cell_state(row, col):
     """获取城池状态 - 倒计时结束后保留状态，只隐藏时间显示"""
@@ -126,9 +127,8 @@ def get_cell_state(row, col):
         try:
             expires = datetime.fromisoformat(item['expires'])
             now = beijing_now()
-
+            
             if now >= expires:
-                # 倒计时已结束，返回过期状态（保留颜色和标记，不显示时间）
                 return "expired", None, None, item.get('side', 'friendly'), item.get('side_icon', '✅')
             else:
                 remaining = expires - now
@@ -137,10 +137,8 @@ def get_cell_state(row, col):
                 mins = (total_seconds % 3600) // 60
                 return "occupied", f"{hours}h{mins}m", expires, item.get('side', 'friendly'), item.get('side_icon', '✅')
         except:
-            # 数据格式错误，视为空闲
             return "free", None, None, None, None
     return "free", None, None, None, None
-
 
 def occupy_cell(row, col, minutes, side):
     name = CITIES[row][col]
@@ -156,33 +154,29 @@ def occupy_cell(row, col, minutes, side):
     }
     save_data(st.session_state.data)
 
-
 def get_remaining_minutes(expires):
     """获取剩余分钟数"""
     remaining = expires - beijing_now()
     return int(remaining.total_seconds() // 60)
 
-
-# ========== 选择按钮区域（st.button 处理选择逻辑）==========
+# ========== 选择按钮区域 ==========
 def render_selection_buttons():
-    """使用 st.button 渲染选择按钮，用于批量选择模式"""
     for i in range(11):
         cols = st.columns(11, gap="small")
         for j in range(11):
             name = CITIES[i][j]
             key = f"{i},{j}"
-
+            
             if not name:
                 with cols[j]:
                     st.empty()
                 continue
-
+            
             state, timer, expires, side, side_icon = get_cell_state(i, j)
             line1, line2 = format_name(name)
             is_sp = is_special(name)
             is_selected = key in st.session_state.selected
-
-            # 确定样式（过期状态与占领状态使用相同背景色）
+            
             if is_selected:
                 bg_color = "#fff9c4"
                 text_color = "#333"
@@ -199,8 +193,7 @@ def render_selection_buttons():
                 bg_color = "#f0f2f6"
                 text_color = "#ff0000" if is_sp else "#333"
                 border = "2px solid #aaa"
-
-            # 构建按钮文字（过期状态不显示倒计时）
+            
             if state == "occupied":
                 if line2:
                     display_text = f"{side_icon} {line1}\n{line2}\n\n{timer}\n{expires.strftime('%H:%M')}"
@@ -216,11 +209,11 @@ def render_selection_buttons():
                     display_text = f"{line1}\n{line2}"
                 else:
                     display_text = line1
-
+            
             with cols[j]:
                 st.markdown(f"""
                 <style>
-                div[data-testid="column"]:nth-child({j + 1}) .stButton button {{
+                div[data-testid="column"]:nth-child({j+1}) .stButton button {{
                     background-color: {bg_color} !important;
                     color: {text_color} !important;
                     border: {border} !important;
@@ -236,7 +229,7 @@ def render_selection_buttons():
                 }}
                 </style>
                 """, unsafe_allow_html=True)
-
+                
                 if st.button(display_text, key=f"select_{i}_{j}", use_container_width=True):
                     if st.session_state.authenticated and st.session_state.select_mode:
                         if key in st.session_state.selected:
@@ -245,24 +238,21 @@ def render_selection_buttons():
                             st.session_state.selected.add(key)
                         st.rerun()
 
-
 # ========== 显示区域（HTML 显示结果）==========
 def render_display():
-    """使用 HTML 渲染显示，背景色完全可控"""
     cells_html = []
     for i in range(11):
         for j in range(11):
             name = CITIES[i][j]
-
+            
             if not name:
                 cells_html.append('<div style="background:#f0f0f0; border-radius:8px;"></div>')
                 continue
-
+            
             state, timer, expires, side, side_icon = get_cell_state(i, j)
             line1, line2 = format_name(name)
             is_sp = is_special(name)
-
-            # 确定背景色（过期状态与占领状态使用相同背景色）
+            
             if state in ["occupied", "expired"]:
                 if side == "friendly":
                     bg_color = "#4CAF50"
@@ -273,8 +263,7 @@ def render_display():
             else:
                 bg_color = "#e8e8e8"
                 text_color = "#333"
-
-            # 构建内容（过期状态不显示倒计时和时间）
+            
             if state == "occupied":
                 if line2:
                     content = f'<div class="line1">{side_icon} {line1}</div><div class="line2">{line2}</div><div class="timer">⏰ {timer}</div><div class="expire">📅 {expires.strftime("%H:%M")}</div>'
@@ -296,13 +285,13 @@ def render_display():
                         content = f'<div class="line1 special-text">{line1}</div>'
                     else:
                         content = f'<div class="line1">{line1}</div>'
-
+            
             cells_html.append(f'''
             <div class="city-cell" style="background-color:{bg_color}; color:{text_color};">
                 {content}
             </div>
             ''')
-
+    
     html = f'''
     <!DOCTYPE html>
     <html>
@@ -344,13 +333,15 @@ def render_display():
     '''
     return html
 
-
 # ========== 侧边栏 ==========
 with st.sidebar:
     st.header("🎮 游戏控制")
-
+    
+    # 显示当前存储路径（调试用）
+    st.caption(f"📁 数据存储: {DATA_FILE}")
+    
     st.markdown("### 🔐 管理员登录")
-
+    
     if st.session_state.authenticated:
         st.success(f"✅ 已登录")
         if st.button("🚪 退出登录", use_container_width=True):
@@ -367,32 +358,32 @@ with st.sidebar:
                 st.rerun()
             else:
                 st.error("密码错误！")
-
+    
     st.divider()
-
+    
     if st.session_state.authenticated:
         st.markdown("### 📝 管理功能")
-
+        
         mode_text = "✏️ 批量选择模式" + (" ✅" if st.session_state.select_mode else "")
         if st.button(mode_text, use_container_width=True):
             st.session_state.select_mode = not st.session_state.select_mode
             if not st.session_state.select_mode:
                 st.session_state.selected.clear()
             st.rerun()
-
+        
         if st.session_state.select_mode:
             st.markdown(f"**已选择: {len(st.session_state.selected)} 个城池**")
-
+            
             if st.session_state.selected:
                 with st.expander("查看选中的城池"):
                     for key in list(st.session_state.selected)[:10]:
                         r, c = map(int, key.split(','))
                         st.caption(f"• {CITIES[r][c]}")
                     if len(st.session_state.selected) > 10:
-                        st.caption(f"... 还有 {len(st.session_state.selected) - 10} 个")
-
+                        st.caption(f"... 还有 {len(st.session_state.selected)-10} 个")
+            
             batch_minutes = st.number_input("保护时间(分钟)", min_value=1, max_value=1440, value=180, step=5)
-
+            
             col1, col2 = st.columns(2)
             with col1:
                 if st.button(f"✅ 批量己方 ({batch_minutes}分钟)", use_container_width=True):
@@ -428,14 +419,14 @@ with st.sidebar:
                     st.session_state.selected.clear()
                     st.session_state.select_mode = False
                     st.rerun()
-
+            
             if st.button("清空选择", use_container_width=True):
                 st.session_state.selected.clear()
                 st.rerun()
-
+        
         st.divider()
-
-    # 统计（统计所有有数据的城池，包括过期的）
+    
+    # 统计
     st.markdown("### 📊 统计")
     friendly = 0
     enemy = 0
@@ -444,7 +435,7 @@ with st.sidebar:
             friendly += 1
         else:
             enemy += 1
-
+    
     col1, col2, col3 = st.columns(3)
     with col1:
         st.metric("🏯 己方", friendly)
@@ -452,10 +443,9 @@ with st.sidebar:
         st.metric("⚔️ 敌方", enemy)
     with col3:
         st.metric("🆓 空闲", 120 - friendly - enemy)
-
+    
     st.divider()
-
-    # 即将到期 - 显示所有剩余时间少于60分钟的城池（只显示未过期的）
+    
     st.markdown("### ⏰ 即将到期（<60分钟）")
     now = beijing_now()
     soon = []
@@ -468,7 +458,7 @@ with st.sidebar:
                     soon.append((item['name'], remaining_minutes, expires, item.get('side')))
         except:
             pass
-
+    
     soon.sort(key=lambda x: x[1])
     if soon:
         for name, minutes, expires, side in soon[:20]:
@@ -477,7 +467,7 @@ with st.sidebar:
             st.caption(f"   到期: {expires.strftime('%H:%M')}")
     else:
         st.caption("暂无即将到期的城池")
-
+    
     if st.button("🗑️ 重置全部", use_container_width=True):
         if st.session_state.authenticated:
             st.session_state.data = {}
@@ -488,7 +478,7 @@ with st.sidebar:
             st.rerun()
 
 # ========== 主界面 ==========
-st.title("🏰龙城争霸🐉")
+st.title("🏰 城池占领游戏")
 st.caption(f"🕐 北京时间: {beijing_now().strftime('%Y-%m-%d %H:%M:%S')}")
 
 if not st.session_state.authenticated:
