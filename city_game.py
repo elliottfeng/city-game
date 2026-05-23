@@ -14,7 +14,7 @@ st.set_page_config(page_title="🏰龙城争霸🐉", layout="wide")
 # 创建步骤见代码后面的说明
 
 GIST_ID = "1886b7b643cfb1d0ad58d9fb5997ae34"  # 替换为你的 Gist ID
-GITHUB_TOKEN = "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"  # 替换为你的 GitHub Token
+GITHUB_TOKEN = "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"  # 替换为你的 GitHub Token
 
 def load_data_from_gist():
     """从 GitHub Gist 加载数据"""
