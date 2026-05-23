@@ -5,7 +5,7 @@ import os
 import hashlib
 import pytz
 
-st.set_page_config(page_title="城池占领游戏", layout="wide")
+st.set_page_config(page_title="龙城争霸", layout="wide")
 
 DATA_FILE = "city_data.json"
 
