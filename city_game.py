@@ -4,21 +4,51 @@ import json
 import os
 import hashlib
 import pytz
+import requests
 
-st.set_page_config(page_title="城池占领游戏", layout="wide")
+st.set_page_config(page_title="🏰龙城争霸🐉", layout="wide")
 
-# ========== 数据文件路径 - 适配 Streamlit Cloud ==========
-# Streamlit Cloud 的持久化目录是 /mount
-# 本地运行时使用当前目录
-if os.path.exists("/mount"):
-    DATA_DIR = "/mount"
-else:
-    DATA_DIR = os.path.dirname(os.path.abspath(__file__))
+# ========== GitHub Gist 配置 ==========
+# 请先在 https://gist.github.com 创建一个 secret gist
+# 然后获取你的 Personal Access Token
+# 创建步骤见代码后面的说明
 
-DATA_FILE = os.path.join(DATA_DIR, "city_data.json")
+GIST_ID = "1886b7b643cfb1d0ad58d9fb5997ae34"  # 替换为你的 Gist ID
+GITHUB_TOKEN = "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"  # 替换为你的 GitHub Token
 
-# 确保目录存在
-os.makedirs(DATA_DIR, exist_ok=True)
+def load_data_from_gist():
+    """从 GitHub Gist 加载数据"""
+    try:
+        url = f"https://api.github.com/gists/{GIST_ID}"
+        headers = {"Authorization": f"token {GITHUB_TOKEN}"}
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200:
+            gist_data = response.json()
+            files = gist_data.get('files', {})
+            if 'city_data.json' in files:
+                content = files['city_data.json'].get('content', '{}')
+                return json.loads(content) if content else {}
+    except Exception as e:
+        print(f"加载失败: {e}")
+    return {}
+
+def save_data_to_gist(data):
+    """保存数据到 GitHub Gist"""
+    try:
+        url = f"https://api.github.com/gists/{GIST_ID}"
+        headers = {"Authorization": f"token {GITHUB_TOKEN}"}
+        payload = {
+            "files": {
+                "city_data.json": {
+                    "content": json.dumps(data, ensure_ascii=False, indent=2)
+                }
+            }
+        }
+        response = requests.patch(url, headers=headers, json=payload)
+        return response.status_code == 201 or response.status_code == 200
+    except Exception as e:
+        print(f"保存失败: {e}")
+    return False
 
 # ========== 时区设置 ==========
 BEIJING_TZ = pytz.timezone('Asia/Shanghai')
@@ -82,45 +112,28 @@ def format_name(city):
     return city, ""
 
 def load_data():
-    """从文件加载数据"""
-    if os.path.exists(DATA_FILE):
-        try:
-            with open(DATA_FILE, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                print(f"成功加载数据，共 {len(data)} 条记录")
-                return data
-        except Exception as e:
-            print(f"加载数据失败: {e}")
-            return {}
-    else:
-        print(f"数据文件不存在: {DATA_FILE}")
-        return {}
+    """从 GitHub Gist 加载数据"""
+    if GIST_ID and GITHUB_TOKEN:
+        return load_data_from_gist()
+    return {}
 
 def save_data(data):
-    """保存数据到文件"""
-    try:
-        with open(DATA_FILE, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        print(f"成功保存数据，共 {len(data)} 条记录")
-        return True
-    except Exception as e:
-        print(f"保存数据失败: {e}")
-        return False
+    """保存数据到 GitHub Gist"""
+    if GIST_ID and GITHUB_TOKEN:
+        return save_data_to_gist(data)
+    return False
 
-# 加载数据（每次页面加载时从文件读取）
+# 加载数据
 def init_data():
-    """初始化数据 - 从文件加载"""
+    """初始化数据"""
     loaded_data = load_data()
     st.session_state.data = loaded_data if loaded_data else {}
     st.session_state.data_loaded = True
-    print(f"数据初始化完成，当前数据: {st.session_state.data}")
 
-# 如果数据还未加载，则加载
 if not st.session_state.data_loaded:
     init_data()
 
 def get_cell_state(row, col):
-    """获取城池状态 - 倒计时结束后保留状态，只隐藏时间显示"""
     key = f"{row},{col}"
     if key in st.session_state.data:
         item = st.session_state.data[key]
@@ -155,7 +168,6 @@ def occupy_cell(row, col, minutes, side):
     save_data(st.session_state.data)
 
 def get_remaining_minutes(expires):
-    """获取剩余分钟数"""
     remaining = expires - beijing_now()
     return int(remaining.total_seconds() // 60)
 
@@ -238,7 +250,7 @@ def render_selection_buttons():
                             st.session_state.selected.add(key)
                         st.rerun()
 
-# ========== 显示区域（HTML 显示结果）==========
+# ========== 显示区域 ==========
 def render_display():
     cells_html = []
     for i in range(11):
@@ -337,8 +349,11 @@ def render_display():
 with st.sidebar:
     st.header("🎮 游戏控制")
     
-    # 显示当前存储路径（调试用）
-    st.caption(f"📁 数据存储: {DATA_FILE}")
+    # 显示连接状态
+    if GIST_ID and GITHUB_TOKEN:
+        st.success("✅ 云存储已连接")
+    else:
+        st.warning("⚠️ 请配置 GitHub Gist")
     
     st.markdown("### 🔐 管理员登录")
     
@@ -472,13 +487,11 @@ with st.sidebar:
         if st.session_state.authenticated:
             st.session_state.data = {}
             st.session_state.selected.clear()
-            if os.path.exists(DATA_FILE):
-                os.remove(DATA_FILE)
             save_data({})
             st.rerun()
 
 # ========== 主界面 ==========
-st.title("🏰 城池占领游戏")
+st.title("🏰龙城争霸🐉")
 st.caption(f"🕐 北京时间: {beijing_now().strftime('%Y-%m-%d %H:%M:%S')}")
 
 if not st.session_state.authenticated:
