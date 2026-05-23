@@ -307,7 +307,7 @@ with st.sidebar:
             st.error("需要管理员权限！")
 
 # ========== 主界面 ==========
-st.title("🏰 城池占领游戏")
+st.title("🏰 龙城争霸")
 
 # 显示当前北京时间
 current_time = beijing_now().strftime("%Y-%m-%d %H:%M:%S")
