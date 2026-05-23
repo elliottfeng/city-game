@@ -5,16 +5,18 @@ import os
 import hashlib
 import pytz
 
-st.set_page_config(page_title="龙城争霸", layout="wide")
+st.set_page_config(page_title="🏰龙城争霸🐉", layout="wide")
 
+# ========== 数据文件路径 ==========
 DATA_FILE = "city_data.json"
+if os.path.exists("/mount"):
+    DATA_FILE = "/mount/city_data.json"
 
 # ========== 时区设置 ==========
 BEIJING_TZ = pytz.timezone('Asia/Shanghai')
 
 
 def beijing_now():
-    """获取当前北京时间（naive datetime，方便存储和比较）"""
     return datetime.now(BEIJING_TZ).replace(tzinfo=None)
 
 
@@ -26,11 +28,15 @@ def check_password(password):
     return hashlib.md5(password.encode()).hexdigest() == ADMIN_PASSWORD_HASH
 
 
-# 初始化密码状态
+# 初始化状态
 if 'authenticated' not in st.session_state:
     st.session_state.authenticated = False
-if 'auth_failed' not in st.session_state:
-    st.session_state.auth_failed = False
+if 'select_mode' not in st.session_state:
+    st.session_state.select_mode = False
+if 'selected' not in st.session_state:
+    st.session_state.selected = set()
+if 'pending_cell' not in st.session_state:
+    st.session_state.pending_cell = None
 
 # 11x11 城池数据
 CITIES = [
@@ -88,53 +94,50 @@ def load_data():
         try:
             with open(DATA_FILE, 'r', encoding='utf-8') as f:
                 return json.load(f)
-        except:
+        except Exception as e:
+            print(f"加载数据失败: {e}")
             return {}
     return {}
 
 
 def save_data(data):
-    with open(DATA_FILE, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    try:
+        with open(DATA_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        return True
+    except Exception as e:
+        print(f"保存数据失败: {e}")
+        return False
 
 
-# 初始化数据
+# 加载数据
 if 'data' not in st.session_state:
     st.session_state.data = load_data()
-if 'select_mode' not in st.session_state:
-    st.session_state.select_mode = False
-if 'selected' not in st.session_state:
-    st.session_state.selected = set()
-if 'batch_minutes' not in st.session_state:
-    st.session_state.batch_minutes = 180
+    if not st.session_state.data:
+        st.session_state.data = {}
+        save_data(st.session_state.data)
 
 
 def get_cell_state(row, col):
-    """获取城池状态，倒计时结束后只清除时间，保留敌我标记"""
+    """获取城池状态 - 倒计时结束后保留状态，只隐藏时间显示"""
     key = f"{row},{col}"
     if key in st.session_state.data:
         item = st.session_state.data[key]
         try:
             expires = datetime.fromisoformat(item['expires'])
-            if beijing_now() >= expires:
-                # 倒计时结束：只清除时间，保留 side 和 side_icon
-                st.session_state.data[key] = {
-                    "name": item['name'],
-                    "side": item.get('side', 'friendly'),
-                    "side_icon": item.get('side_icon', '✅'),
-                    "expired": True
-                }
-                save_data(st.session_state.data)
-                return "occupied_permanent", None, None, item.get('side', 'friendly'), item.get('side_icon', '✅')
+            now = beijing_now()
+
+            if now >= expires:
+                # 倒计时已结束，返回过期状态（保留颜色和标记，不显示时间）
+                return "expired", None, None, item.get('side', 'friendly'), item.get('side_icon', '✅')
             else:
-                remaining = expires - beijing_now()
+                remaining = expires - now
                 total_seconds = int(remaining.total_seconds())
                 hours = total_seconds // 3600
                 mins = (total_seconds % 3600) // 60
                 return "occupied", f"{hours}h{mins}m", expires, item.get('side', 'friendly'), item.get('side_icon', '✅')
         except:
-            if item.get('expired') or 'side' in item:
-                return "occupied_permanent", None, None, item.get('side', 'friendly'), item.get('side_icon', '✅')
+            # 数据格式错误，视为空闲
             return "free", None, None, None, None
     return "free", None, None, None, None
 
@@ -154,33 +157,202 @@ def occupy_cell(row, col, minutes, side):
     save_data(st.session_state.data)
 
 
-def batch_occupy(side, minutes):
-    for key in list(st.session_state.selected):
-        r, c = map(int, key.split(','))
-        name = CITIES[r][c]
-        if name:
-            expires = beijing_now() + timedelta(minutes=minutes)
-            side_icon = "✅" if side == "friendly" else "❌"
-            st.session_state.data[key] = {
-                "name": name,
-                "expires": expires.isoformat(),
-                "side": side,
-                "side_icon": side_icon
-            }
-    save_data(st.session_state.data)
-    st.session_state.selected.clear()
-    st.session_state.select_mode = False
+def get_remaining_minutes(expires):
+    """获取剩余分钟数"""
+    remaining = expires - beijing_now()
+    return int(remaining.total_seconds() // 60)
+
+
+# ========== 选择按钮区域（st.button 处理选择逻辑）==========
+def render_selection_buttons():
+    """使用 st.button 渲染选择按钮，用于批量选择模式"""
+    for i in range(11):
+        cols = st.columns(11, gap="small")
+        for j in range(11):
+            name = CITIES[i][j]
+            key = f"{i},{j}"
+
+            if not name:
+                with cols[j]:
+                    st.empty()
+                continue
+
+            state, timer, expires, side, side_icon = get_cell_state(i, j)
+            line1, line2 = format_name(name)
+            is_sp = is_special(name)
+            is_selected = key in st.session_state.selected
+
+            # 确定样式（过期状态与占领状态使用相同背景色）
+            if is_selected:
+                bg_color = "#fff9c4"
+                text_color = "#333"
+                border = "3px solid #ff9800"
+            elif state in ["occupied", "expired"]:
+                if side == "friendly":
+                    bg_color = "#4CAF50"
+                    text_color = "white"
+                else:
+                    bg_color = "#f44336"
+                    text_color = "white"
+                border = "2px solid #555"
+            else:
+                bg_color = "#f0f2f6"
+                text_color = "#ff0000" if is_sp else "#333"
+                border = "2px solid #aaa"
+
+            # 构建按钮文字（过期状态不显示倒计时）
+            if state == "occupied":
+                if line2:
+                    display_text = f"{side_icon} {line1}\n{line2}\n\n{timer}\n{expires.strftime('%H:%M')}"
+                else:
+                    display_text = f"{side_icon} {line1}\n\n{timer}\n{expires.strftime('%H:%M')}"
+            elif state == "expired":
+                if line2:
+                    display_text = f"{side_icon} {line1}\n{line2}"
+                else:
+                    display_text = f"{side_icon} {line1}"
+            else:
+                if line2:
+                    display_text = f"{line1}\n{line2}"
+                else:
+                    display_text = line1
+
+            with cols[j]:
+                st.markdown(f"""
+                <style>
+                div[data-testid="column"]:nth-child({j + 1}) .stButton button {{
+                    background-color: {bg_color} !important;
+                    color: {text_color} !important;
+                    border: {border} !important;
+                    width: 100% !important;
+                    min-height: 100px !important;
+                    white-space: pre-line !important;
+                    line-height: 1.4 !important;
+                    font-size: 12px !important;
+                    font-family: 'SimSun', '宋体', 'Microsoft YaHei', serif !important;
+                    border-radius: 8px !important;
+                    padding: 8px 4px !important;
+                    transition: all 0.2s ease !important;
+                }}
+                </style>
+                """, unsafe_allow_html=True)
+
+                if st.button(display_text, key=f"select_{i}_{j}", use_container_width=True):
+                    if st.session_state.authenticated and st.session_state.select_mode:
+                        if key in st.session_state.selected:
+                            st.session_state.selected.remove(key)
+                        else:
+                            st.session_state.selected.add(key)
+                        st.rerun()
+
+
+# ========== 显示区域（HTML 显示结果）==========
+def render_display():
+    """使用 HTML 渲染显示，背景色完全可控"""
+    cells_html = []
+    for i in range(11):
+        for j in range(11):
+            name = CITIES[i][j]
+
+            if not name:
+                cells_html.append('<div style="background:#f0f0f0; border-radius:8px;"></div>')
+                continue
+
+            state, timer, expires, side, side_icon = get_cell_state(i, j)
+            line1, line2 = format_name(name)
+            is_sp = is_special(name)
+
+            # 确定背景色（过期状态与占领状态使用相同背景色）
+            if state in ["occupied", "expired"]:
+                if side == "friendly":
+                    bg_color = "#4CAF50"
+                    text_color = "white"
+                else:
+                    bg_color = "#f44336"
+                    text_color = "white"
+            else:
+                bg_color = "#e8e8e8"
+                text_color = "#333"
+
+            # 构建内容（过期状态不显示倒计时和时间）
+            if state == "occupied":
+                if line2:
+                    content = f'<div class="line1">{side_icon} {line1}</div><div class="line2">{line2}</div><div class="timer">⏰ {timer}</div><div class="expire">📅 {expires.strftime("%H:%M")}</div>'
+                else:
+                    content = f'<div class="line1">{side_icon} {line1}</div><div class="timer">⏰ {timer}</div><div class="expire">📅 {expires.strftime("%H:%M")}</div>'
+            elif state == "expired":
+                if line2:
+                    content = f'<div class="line1">{side_icon} {line1}</div><div class="line2">{line2}</div>'
+                else:
+                    content = f'<div class="line1">{side_icon} {line1}</div>'
+            else:
+                if line2:
+                    if is_sp:
+                        content = f'<div class="line1">{line1}</div><div class="line2 special-text">{line2}</div>'
+                    else:
+                        content = f'<div class="line1">{line1}</div><div class="line2">{line2}</div>'
+                else:
+                    if is_sp:
+                        content = f'<div class="line1 special-text">{line1}</div>'
+                    else:
+                        content = f'<div class="line1">{line1}</div>'
+
+            cells_html.append(f'''
+            <div class="city-cell" style="background-color:{bg_color}; color:{text_color};">
+                {content}
+            </div>
+            ''')
+
+    html = f'''
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <style>
+            .city-grid {{
+                display: grid;
+                grid-template-columns: repeat(11, 1fr);
+                gap: 6px;
+                margin-top: 20px;
+                margin-bottom: 20px;
+            }}
+            .city-cell {{
+                aspect-ratio: 1 / 0.9;
+                border-radius: 8px;
+                padding: 8px 4px;
+                text-align: center;
+                display: flex;
+                flex-direction: column;
+                justify-content: center;
+                font-size: 12px;
+                font-family: 'SimSun', '宋体', 'Microsoft YaHei', serif;
+                border: 1px solid #ddd;
+            }}
+            .line1 {{ font-size: 13px; font-weight: bold; }}
+            .line2 {{ font-size: 13px; }}
+            .timer {{ font-size: 11px; margin-top: 5px; }}
+            .expire {{ font-size: 10px; margin-top: 2px; }}
+            .special-text {{ color: #ff0000 !important; font-weight: bold !important; }}
+        </style>
+    </head>
+    <body>
+        <div class="city-grid">
+            {''.join(cells_html)}
+        </div>
+    </body>
+    </html>
+    '''
+    return html
 
 
 # ========== 侧边栏 ==========
 with st.sidebar:
     st.header("🎮 游戏控制")
 
-    # ========== 登录区域 ==========
     st.markdown("### 🔐 管理员登录")
 
     if st.session_state.authenticated:
-        st.success(f"✅ 已登录 (管理员)")
+        st.success(f"✅ 已登录")
         if st.button("🚪 退出登录", use_container_width=True):
             st.session_state.authenticated = False
             st.session_state.select_mode = False
@@ -189,27 +361,20 @@ with st.sidebar:
     else:
         st.info("未登录，只能查看")
         password = st.text_input("请输入密码", type="password", key="login_password")
-
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("登录", use_container_width=True):
-                if check_password(password):
-                    st.session_state.authenticated = True
-                    st.session_state.auth_failed = False
-                    st.rerun()
-                else:
-                    st.session_state.auth_failed = True
-        if st.session_state.auth_failed:
-            st.error("密码错误！")
+        if st.button("登录", use_container_width=True):
+            if check_password(password):
+                st.session_state.authenticated = True
+                st.rerun()
+            else:
+                st.error("密码错误！")
 
     st.divider()
 
-    # ========== 管理员功能（仅登录后可见） ==========
     if st.session_state.authenticated:
         st.markdown("### 📝 管理功能")
 
-        mode_label = "✏️ 批量选择模式" + (" ✅" if st.session_state.select_mode else "")
-        if st.button(mode_label, use_container_width=True):
+        mode_text = "✏️ 批量选择模式" + (" ✅" if st.session_state.select_mode else "")
+        if st.button(mode_text, use_container_width=True):
             st.session_state.select_mode = not st.session_state.select_mode
             if not st.session_state.select_mode:
                 st.session_state.selected.clear()
@@ -226,19 +391,42 @@ with st.sidebar:
                     if len(st.session_state.selected) > 10:
                         st.caption(f"... 还有 {len(st.session_state.selected) - 10} 个")
 
-            st.markdown("**批量时间设置**")
-            batch_minutes = st.number_input("保护时间(分钟)", min_value=1, max_value=1440,
-                                            value=st.session_state.batch_minutes, step=5)
-            st.session_state.batch_minutes = batch_minutes
+            batch_minutes = st.number_input("保护时间(分钟)", min_value=1, max_value=1440, value=180, step=5)
 
             col1, col2 = st.columns(2)
             with col1:
                 if st.button(f"✅ 批量己方 ({batch_minutes}分钟)", use_container_width=True):
-                    batch_occupy("friendly", batch_minutes)
+                    for key in list(st.session_state.selected):
+                        r, c = map(int, key.split(','))
+                        name = CITIES[r][c]
+                        if name:
+                            expires = beijing_now() + timedelta(minutes=batch_minutes)
+                            st.session_state.data[key] = {
+                                "name": name,
+                                "expires": expires.isoformat(),
+                                "side": "friendly",
+                                "side_icon": "✅"
+                            }
+                    save_data(st.session_state.data)
+                    st.session_state.selected.clear()
+                    st.session_state.select_mode = False
                     st.rerun()
             with col2:
                 if st.button(f"❌ 批量敌方 ({batch_minutes}分钟)", use_container_width=True):
-                    batch_occupy("enemy", batch_minutes)
+                    for key in list(st.session_state.selected):
+                        r, c = map(int, key.split(','))
+                        name = CITIES[r][c]
+                        if name:
+                            expires = beijing_now() + timedelta(minutes=batch_minutes)
+                            st.session_state.data[key] = {
+                                "name": name,
+                                "expires": expires.isoformat(),
+                                "side": "enemy",
+                                "side_icon": "❌"
+                            }
+                    save_data(st.session_state.data)
+                    st.session_state.selected.clear()
+                    st.session_state.select_mode = False
                     st.rerun()
 
             if st.button("清空选择", use_container_width=True):
@@ -247,21 +435,15 @@ with st.sidebar:
 
         st.divider()
 
-    # ========== 统计信息（所有人可见） ==========
-    st.markdown("### 📊 统计信息")
-
-    now = beijing_now()
+    # 统计（统计所有有数据的城池，包括过期的）
+    st.markdown("### 📊 统计")
     friendly = 0
     enemy = 0
     for item in st.session_state.data.values():
-        try:
-            if 'side' in item:
-                if item.get('side') == 'friendly':
-                    friendly += 1
-                else:
-                    enemy += 1
-        except:
-            pass
+        if item.get('side') == 'friendly':
+            friendly += 1
+        else:
+            enemy += 1
 
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -273,187 +455,48 @@ with st.sidebar:
 
     st.divider()
 
-    st.markdown("### ⏰ 即将到期")
+    # 即将到期 - 显示所有剩余时间少于60分钟的城池（只显示未过期的）
+    st.markdown("### ⏰ 即将到期（<60分钟）")
+    now = beijing_now()
     soon = []
     for key, item in st.session_state.data.items():
         try:
-            if 'expires' in item:
-                expires = datetime.fromisoformat(item['expires'])
-                if expires > now:
-                    remaining = expires - now
-                    soon.append((item['name'], remaining, item.get('side'), expires))
+            expires = datetime.fromisoformat(item['expires'])
+            if expires > now:
+                remaining_minutes = get_remaining_minutes(expires)
+                if remaining_minutes < 60:
+                    soon.append((item['name'], remaining_minutes, expires, item.get('side')))
         except:
             pass
+
     soon.sort(key=lambda x: x[1])
-    for name, remaining, side, expires in soon[:5]:
-        total_seconds = int(remaining.total_seconds())
-        h = total_seconds // 3600
-        m = (total_seconds % 3600) // 60
-        icon = "✅" if side == 'friendly' else "❌"
-        st.write(f"{icon} {name}: {h}h{m}m")
-        st.caption(f"   到期: {expires.strftime('%H:%M')}")
+    if soon:
+        for name, minutes, expires, side in soon[:20]:
+            icon = "✅" if side == 'friendly' else "❌"
+            st.write(f"{icon} {name}: {minutes}分钟")
+            st.caption(f"   到期: {expires.strftime('%H:%M')}")
+    else:
+        st.caption("暂无即将到期的城池")
 
-    st.divider()
-
-    # ========== 重置功能 ==========
     if st.button("🗑️ 重置全部", use_container_width=True):
         if st.session_state.authenticated:
             st.session_state.data = {}
             st.session_state.selected.clear()
             if os.path.exists(DATA_FILE):
                 os.remove(DATA_FILE)
+            save_data({})
             st.rerun()
-        else:
-            st.error("需要管理员权限！")
 
 # ========== 主界面 ==========
-st.title("🏰 龙城争霸")
+st.title("🏰龙城争霸🐉")
+st.caption(f"🕐 北京时间: {beijing_now().strftime('%Y-%m-%d %H:%M:%S')}")
 
-# 显示当前北京时间
-current_time = beijing_now().strftime("%Y-%m-%d %H:%M:%S")
-st.caption(f"🕐 当前北京时间: {current_time}")
-
-# 未登录时显示提示
 if not st.session_state.authenticated:
-    st.info("🔐 当前为只读模式，如需修改城池状态，请在左侧边栏登录")
+    st.info("🔐 只读模式，登录后可修改")
 
-    with st.expander("📖 查看说明"):
-        st.markdown("""
-        - ✅ 绿色格子：己方占领
-        - ❌ 红色格子：敌方占领
-        - 如需修改，请在左侧边栏输入密码登录
-        """)
-
-    st.divider()
-
-# 全局样式
-st.markdown("""
-<style>
-.stButton > button {
-    width: 100% !important;
-    min-height: 95px !important;
-    white-space: pre-line !important;
-    line-height: 1.3 !important;
-    font-size: 11px !important;
-    border-radius: 8px !important;
-    padding: 6px 3px !important;
-    transition: all 0.2s ease !important;
-}
-.stButton > button:hover {
-    transform: scale(1.02) !important;
-}
-</style>
-""", unsafe_allow_html=True)
-
-# 使用 columns 创建网格
-for i in range(11):
-    cols = st.columns(11, gap="small")
-    for j in range(11):
-        name = CITIES[i][j]
-        key = f"{i},{j}"
-
-        if not name:
-            with cols[j]:
-                st.empty()
-            continue
-
-        state, timer, expires, side, side_icon = get_cell_state(i, j)
-        line1, line2 = format_name(name)
-        is_sp = is_special(name)
-        is_selected = key in st.session_state.selected
-
-        # 构建按钮文字
-        if state == "occupied":
-            if line2:
-                display_text = f"{side_icon} {line1}\n{line2}\n\n⏰ {timer}\n📅 {expires.strftime('%H:%M')}"
-            else:
-                display_text = f"{side_icon} {line1}\n\n⏰ {timer}\n📅 {expires.strftime('%H:%M')}"
-        elif state == "occupied_permanent":
-            if line2:
-                display_text = f"{side_icon} {line1}\n{line2}"
-            else:
-                display_text = f"{side_icon} {line1}"
-        else:
-            if line2:
-                display_text = f"{line1}\n{line2}"
-            else:
-                display_text = line1
-
-        # 确定样式
-        if is_selected:
-            bg_color = "#fff9c4"
-            text_color = "#333"
-            border = "3px solid #ff9800"
-        elif state in ["occupied", "occupied_permanent"]:
-            if side == "friendly":
-                bg_color = "#4CAF50"
-                text_color = "white"
-            else:
-                bg_color = "#f44336"
-                text_color = "white"
-            border = "2px solid #555"
-        else:
-            bg_color = "#f0f2f6"
-            text_color = "#ff0000" if is_sp else "#333"
-            border = "2px solid #aaa"
-
-        with cols[j]:
-            # 设置按钮样式
-            st.markdown(f"""
-            <style>
-            div[data-testid="column"]:nth-child({j + 1}) .stButton button {{
-                background-color: {bg_color} !important;
-                color: {text_color} !important;
-                border: {border} !important;
-                font-weight: {'bold' if is_sp else 'normal'} !important;
-            }}
-            </style>
-            """, unsafe_allow_html=True)
-
-            button_key = f"cell_{i}_{j}"
-            if st.button(display_text, key=button_key, use_container_width=True):
-                if st.session_state.authenticated:
-                    if st.session_state.select_mode:
-                        if key in st.session_state.selected:
-                            st.session_state.selected.remove(key)
-                        else:
-                            st.session_state.selected.add(key)
-                        st.rerun()
-                    else:
-                        st.session_state['pending_row'] = i
-                        st.session_state['pending_col'] = j
-                        st.rerun()
-                else:
-                    st.error("请先在左侧边栏登录")
-                    st.toast("请先在左侧边栏输入密码登录", icon="🔐")
-
-# 处理占领弹窗（只有登录后才会进入）
-if 'pending_row' in st.session_state and st.session_state.authenticated:
-    row = st.session_state.pending_row
-    col = st.session_state.pending_col
-    name = CITIES[row][col]
-
-    with st.popover(f"⚙️ 占领 {name}", use_container_width=True):
-        st.markdown(f"**{name}**")
-        minutes = st.number_input("保护时间(分钟)", min_value=1, max_value=1440, value=180, step=5,
-                                  key="occupy_minutes")
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("✅ 己方", use_container_width=True):
-                occupy_cell(row, col, minutes, "friendly")
-                del st.session_state.pending_row
-                del st.session_state.pending_col
-                st.rerun()
-        with col2:
-            if st.button("❌ 敌方", use_container_width=True):
-                occupy_cell(row, col, minutes, "enemy")
-                del st.session_state.pending_row
-                del st.session_state.pending_col
-                st.rerun()
-
-# 底部
-st.markdown("---")
-col1, col2, col3 = st.columns([1, 2, 1])
-with col2:
-    if st.button("🔄 刷新数据", use_container_width=True):
-        st.rerun()
+# 根据模式选择不同的渲染方式
+if st.session_state.select_mode:
+    st.warning("🔧 批量选择模式已开启 - 点击格子可多选，选中的格子会有金色边框，然后去左侧边栏批量标记")
+    render_selection_buttons()
+else:
+    st.components.v1.html(render_display(), height=950, scrolling=True)
