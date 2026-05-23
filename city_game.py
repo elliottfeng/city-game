@@ -6,31 +6,42 @@ import hashlib
 import pytz
 import requests
 
-st.set_page_config(page_title="🏰龙城争霸🐉", layout="wide")
+st.set_page_config(page_title="城池占领游戏", layout="wide")
 
-# ========== GitHub Gist 配置 ==========
-# 请先在 https://gist.github.com 创建一个 secret gist
-# 然后获取你的 Personal Access Token
-# 创建步骤见代码后面的说明
+# ========== 从 Streamlit Secrets 读取配置 ==========
+def get_gist_config():
+    """安全获取 Gist 配置"""
+    try:
+        # 尝试从 Streamlit Secrets 读取
+        gist_id = st.secrets["gist"]["id"]
+        github_token = st.secrets["gist"]["token"]
+        return gist_id, github_token
+    except:
+        # 本地开发时使用环境变量
+        gist_id = os.environ.get("GIST_ID", "")
+        github_token = os.environ.get("GITHUB_TOKEN", "")
+        return gist_id, github_token
 
-GIST_ID = "1886b7b643cfb1d0ad58d9fb5997ae34"  # 替换为你的 Gist ID
-GITHUB_TOKEN = "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"  # 替换为你的 GitHub Token
+GIST_ID, GITHUB_TOKEN = get_gist_config()
 
+# ========== 数据持久化函数 ==========
 def load_data_from_gist():
     """从 GitHub Gist 加载数据"""
     try:
         url = f"https://api.github.com/gists/{GIST_ID}"
         headers = {"Authorization": f"token {GITHUB_TOKEN}"}
-        response = requests.get(url, headers=headers)
+        response = requests.get(url, headers=headers, timeout=10)
         if response.status_code == 200:
             gist_data = response.json()
             files = gist_data.get('files', {})
             if 'city_data.json' in files:
                 content = files['city_data.json'].get('content', '{}')
-                return json.loads(content) if content else {}
+                data = json.loads(content) if content else {}
+                if data:
+                    return data
     except Exception as e:
-        print(f"加载失败: {e}")
-    return {}
+        print(f"从 Gist 加载失败: {e}")
+    return load_data_from_local()
 
 def save_data_to_gist(data):
     """保存数据到 GitHub Gist"""
@@ -44,11 +55,45 @@ def save_data_to_gist(data):
                 }
             }
         }
-        response = requests.patch(url, headers=headers, json=payload)
-        return response.status_code == 201 or response.status_code == 200
+        response = requests.patch(url, headers=headers, json=payload, timeout=10)
+        if response.status_code in [200, 201]:
+            return True
     except Exception as e:
-        print(f"保存失败: {e}")
-    return False
+        print(f"保存到 Gist 失败: {e}")
+    return save_data_to_local(data)
+
+def load_data_from_local():
+    """本地文件加载（备用）"""
+    try:
+        if os.path.exists("city_data.json"):
+            with open("city_data.json", 'r', encoding='utf-8') as f:
+                return json.load(f)
+    except:
+        pass
+    return {}
+
+def save_data_to_local(data):
+    """本地文件保存（备用）"""
+    try:
+        with open("city_data.json", 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        return True
+    except:
+        return False
+
+# 根据配置选择存储方式
+if GIST_ID and GITHUB_TOKEN:
+    def load_data():
+        return load_data_from_gist()
+    def save_data(data):
+        return save_data_to_gist(data)
+    storage_mode = "☁️ 云存储 (GitHub Gist)"
+else:
+    def load_data():
+        return load_data_from_local()
+    def save_data(data):
+        return save_data_to_local(data)
+    storage_mode = "💾 本地存储"
 
 # ========== 时区设置 ==========
 BEIJING_TZ = pytz.timezone('Asia/Shanghai')
@@ -110,18 +155,6 @@ def format_name(city):
         idx = city.find("级资源") + 2
         return city[:idx+1], city[idx+1:]
     return city, ""
-
-def load_data():
-    """从 GitHub Gist 加载数据"""
-    if GIST_ID and GITHUB_TOKEN:
-        return load_data_from_gist()
-    return {}
-
-def save_data(data):
-    """保存数据到 GitHub Gist"""
-    if GIST_ID and GITHUB_TOKEN:
-        return save_data_to_gist(data)
-    return False
 
 # 加载数据
 def init_data():
@@ -349,11 +382,8 @@ def render_display():
 with st.sidebar:
     st.header("🎮 游戏控制")
     
-    # 显示连接状态
-    if GIST_ID and GITHUB_TOKEN:
-        st.success("✅ 云存储已连接")
-    else:
-        st.warning("⚠️ 请配置 GitHub Gist")
+    # 显示存储模式
+    st.caption(f"{storage_mode}")
     
     st.markdown("### 🔐 管理员登录")
     
@@ -491,7 +521,7 @@ with st.sidebar:
             st.rerun()
 
 # ========== 主界面 ==========
-st.title("🏰龙城争霸🐉")
+st.title("🏰 城池占领游戏")
 st.caption(f"🕐 北京时间: {beijing_now().strftime('%Y-%m-%d %H:%M:%S')}")
 
 if not st.session_state.authenticated:
