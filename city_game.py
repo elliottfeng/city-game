@@ -302,10 +302,10 @@ def render_selection_buttons():
                 border = "3px solid #ff9800"
             elif state in ["occupied", "expired"]:
                 if side == "friendly":
-                    bg_color = "#4CAF50"
+                    bg_color = "#2196F3"
                     text_color = "white"
                 else:
-                    bg_color = "#f44336"
+                    bg_color = "#4CAF50"
                     text_color = "white"
                 border = "2px solid #555"
             else:
@@ -379,10 +379,10 @@ def render_display():
 
             if state in ["occupied", "expired"]:
                 if side == "friendly":
-                    bg_color = "#4CAF50"
+                    bg_color = "#2196F3"
                     text_color = "white"
                 else:
-                    bg_color = "#f44336"
+                    bg_color = "#4CAF50"
                     text_color = "white"
             else:
                 bg_color = "#e8e8e8"
