@@ -6,7 +6,7 @@ import hashlib
 import pytz
 import requests
 
-st.set_page_config(page_title="城池占领游戏", layout="wide")
+st.set_page_config(page_title="🏰龙城争霸🐉", layout="wide")
 
 
 # ========== 从 Streamlit Secrets 读取配置 ==========
@@ -133,8 +133,35 @@ if 'data_loaded' not in st.session_state:
     st.session_state.data_loaded = False
 if 'recent_actions' not in st.session_state:
     st.session_state.recent_actions = []
+
+# 自动易主配置 - 从文件加载或使用默认值
+AUTO_CONFIG_FILE = "auto_config.json"
+
+
+def load_auto_config():
+    """加载自动易主配置"""
+    try:
+        if os.path.exists(AUTO_CONFIG_FILE):
+            with open(AUTO_CONFIG_FILE, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+                return config.get('auto_transfer_enabled', True)
+    except:
+        pass
+    return True
+
+
+def save_auto_config(enabled):
+    """保存自动易主配置"""
+    try:
+        with open(AUTO_CONFIG_FILE, 'w', encoding='utf-8') as f:
+            json.dump({'auto_transfer_enabled': enabled}, f)
+    except:
+        pass
+
+
+# 初始化自动易主状态
 if 'auto_transfer_enabled' not in st.session_state:
-    st.session_state.auto_transfer_enabled = True
+    st.session_state.auto_transfer_enabled = load_auto_config()
 
 # 固定标准参数
 AUTO_TRANSFER_DELAY_MINUTES = 7  # 到期后7分钟易主
@@ -549,13 +576,20 @@ with st.sidebar:
         # ========== 自动易主设置（仅管理员可见）==========
         st.markdown("### 🤖 自动易主")
 
-        auto_enabled = st.checkbox("启用自动易主", value=st.session_state.auto_transfer_enabled)
+        # 使用 key 确保 checkbox 状态正确保存
+        auto_enabled = st.checkbox("启用自动易主", value=st.session_state.auto_transfer_enabled,
+                                   key="auto_transfer_checkbox")
+
+        # 当 checkbox 状态变化时，保存到 session_state 和文件
         if auto_enabled != st.session_state.auto_transfer_enabled:
             st.session_state.auto_transfer_enabled = auto_enabled
+            save_auto_config(auto_enabled)
             st.rerun()
 
         if st.session_state.auto_transfer_enabled:
             st.info("⚙️ 标准模式：到期后7分钟自动易主，易主后保护3小时")
+        else:
+            st.warning("⚠️ 自动易主已关闭，到期城池不会自动转换阵营")
 
         with st.expander("📖 自动易主说明"):
             st.markdown("""
@@ -797,51 +831,6 @@ with st.sidebar:
 
     st.divider()
 
-    # ========== 已到期点位列表 ==========
-    st.markdown("### 🟡 已到期待易主")
-
-    expired_tab1, expired_tab2 = st.tabs(["🔵 己方已到期 → 将变敌方", "🟢 敌方已到期 → 将变己方"])
-
-    with expired_tab1:
-        expired_friendly = []
-        for key, item in st.session_state.data.items():
-            try:
-                expires = datetime.fromisoformat(item['expires'])
-                if expires <= now and item.get('side') == 'friendly':
-                    if now >= expires + timedelta(minutes=AUTO_TRANSFER_DELAY_MINUTES):
-                        expired_friendly.append((item['name'], expires))
-            except:
-                pass
-        expired_friendly.sort(key=lambda x: x[1])
-
-        if expired_friendly:
-            for name, expires in expired_friendly[:15]:
-                st.write(f"• {name}")
-                st.caption(f"   到期时间: {expires.strftime('%Y-%m-%d %H:%M')}")
-        else:
-            st.caption("暂无己方已到期城池")
-
-    with expired_tab2:
-        expired_enemy = []
-        for key, item in st.session_state.data.items():
-            try:
-                expires = datetime.fromisoformat(item['expires'])
-                if expires <= now and item.get('side') == 'enemy':
-                    if now >= expires + timedelta(minutes=AUTO_TRANSFER_DELAY_MINUTES):
-                        expired_enemy.append((item['name'], expires))
-            except:
-                pass
-        expired_enemy.sort(key=lambda x: x[1])
-
-        if expired_enemy:
-            for name, expires in expired_enemy[:15]:
-                st.write(f"• {name}")
-                st.caption(f"   到期时间: {expires.strftime('%Y-%m-%d %H:%M')}")
-        else:
-            st.caption("暂无敌方已到期城池")
-
-    st.divider()
-
     # ========== 易主中点位列表 ==========
     st.markdown("### 🟧 易主中（7分钟缓冲期）")
 
@@ -928,7 +917,7 @@ with st.sidebar:
 title_col1, title_col2 = st.columns([2, 1])
 
 with title_col1:
-    st.title("🏰 城池占领游戏")
+    st.title("🏰龙城争霸🐉")
 
 with title_col2:
     st.markdown("### 📋 最近攻占")
@@ -941,10 +930,6 @@ with title_col2:
         st.caption("暂无攻占记录")
 
 st.caption(f"🕐 北京时间: {beijing_now().strftime('%Y-%m-%d %H:%M:%S')}")
-
-# 每次页面加载时检查自动易主
-if st.session_state.auto_transfer_enabled:
-    auto_transfer_expired_cells()
 
 if not st.session_state.authenticated:
     st.info("🔐 只读模式，登录后可修改")
