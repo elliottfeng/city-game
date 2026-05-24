@@ -131,6 +131,10 @@ if 'single_selected_cell' not in st.session_state:
     st.session_state.single_selected_cell = None
 if 'data_loaded' not in st.session_state:
     st.session_state.data_loaded = False
+if 'recent_actions' not in st.session_state:
+    st.session_state.recent_actions = []  # 存储最近攻占记录
+if 'expire_tab' not in st.session_state:
+    st.session_state.expire_tab = 0  # 0=己方, 1=敌方
 
 # 11x11 城池数据
 CITIES = [
@@ -187,6 +191,18 @@ def init_data():
     loaded_data = load_data()
     st.session_state.data = loaded_data if loaded_data else {}
     st.session_state.data_loaded = True
+    # 初始化最近攻占记录（从数据中读取最近10条）
+    if 'recent_actions' not in st.session_state or not st.session_state.recent_actions:
+        recent = []
+        for key, item in st.session_state.data.items():
+            if 'last_modified' in item:
+                recent.append({
+                    'name': item['name'],
+                    'time': item['last_modified'],
+                    'action': item.get('action', '占领')
+                })
+        recent.sort(key=lambda x: x['time'], reverse=True)
+        st.session_state.recent_actions = recent[:10]
 
 
 if not st.session_state.data_loaded:
@@ -213,27 +229,46 @@ def get_cell_state(row, col):
     return "free", None, None, None, None
 
 
+def add_recent_action(city_name, action, side):
+    """添加最近攻占记录"""
+    record = {
+        'name': city_name,
+        'time': beijing_now().isoformat(),
+        'action': action,
+        'side': side
+    }
+    st.session_state.recent_actions.insert(0, record)
+    # 只保留最近10条
+    st.session_state.recent_actions = st.session_state.recent_actions[:10]
+
+
 def occupy_cell(row, col, minutes, side):
     name = CITIES[row][col]
     if not name:
         return False
     expires = beijing_now() + timedelta(minutes=float(minutes))
     side_icon = "✅" if side == "friendly" else "❌"
+    action = "标记为己方" if side == "friendly" else "标记为敌方"
+
     st.session_state.data[f"{row},{col}"] = {
         "name": name,
         "expires": expires.isoformat(),
         "side": side,
-        "side_icon": side_icon
+        "side_icon": side_icon,
+        "last_modified": beijing_now().isoformat()
     }
     save_data(st.session_state.data)
+    add_recent_action(name, action, side)
     return True
 
 
 def delete_cell(row, col):
     key = f"{row},{col}"
     if key in st.session_state.data:
+        name = st.session_state.data[key]['name']
         del st.session_state.data[key]
         save_data(st.session_state.data)
+        add_recent_action(name, "清除（变为空闲）", None)
         return True
     return False
 
@@ -498,8 +533,10 @@ with st.sidebar:
                                 "name": name,
                                 "expires": expires.isoformat(),
                                 "side": "friendly",
-                                "side_icon": "✅"
+                                "side_icon": "✅",
+                                "last_modified": beijing_now().isoformat()
                             }
+                            add_recent_action(name, f"批量标记为己方({batch_minutes}分钟)", "friendly")
                     save_data(st.session_state.data)
                     st.session_state.selected.clear()
                     st.session_state.select_mode = False
@@ -515,8 +552,10 @@ with st.sidebar:
                                 "name": name,
                                 "expires": expires.isoformat(),
                                 "side": "enemy",
-                                "side_icon": "❌"
+                                "side_icon": "❌",
+                                "last_modified": beijing_now().isoformat()
                             }
+                            add_recent_action(name, f"批量标记为敌方({batch_minutes}分钟)", "enemy")
                     save_data(st.session_state.data)
                     st.session_state.selected.clear()
                     st.session_state.select_mode = False
@@ -595,7 +634,7 @@ with st.sidebar:
 
         st.divider()
 
-    # ========== 分类统计 ==========
+    # ========== 即将到期（使用标签切换）==========
     st.markdown("### ⏰ 即将到期（<60分钟）")
 
     now = beijing_now()
@@ -620,23 +659,24 @@ with st.sidebar:
     friendly_soon.sort(key=lambda x: x[1])
     enemy_soon.sort(key=lambda x: x[1])
 
-    if friendly_soon:
-        st.markdown("**✅ 己方即将到期**")
-        for name, minutes, expires in friendly_soon[:10]:
-            st.write(f"• {name}: {minutes}分钟")
-            st.caption(f"  到期: {expires.strftime('%H:%M')}")
-    else:
-        st.caption("暂无己方即将到期城池")
+    # 使用标签页切换
+    tab1, tab2 = st.tabs(["✅ 己方即将到期", "❌ 敌方即将到期"])
 
-    st.markdown("---")
+    with tab1:
+        if friendly_soon:
+            for name, minutes, expires in friendly_soon[:15]:
+                st.write(f"• {name}: {minutes}分钟")
+                st.caption(f"  到期: {expires.strftime('%H:%M')}")
+        else:
+            st.caption("暂无己方即将到期城池")
 
-    if enemy_soon:
-        st.markdown("**❌ 敌方即将到期**")
-        for name, minutes, expires in enemy_soon[:10]:
-            st.write(f"• {name}: {minutes}分钟")
-            st.caption(f"  到期: {expires.strftime('%H:%M')}")
-    else:
-        st.caption("暂无敌方即将到期城池")
+    with tab2:
+        if enemy_soon:
+            for name, minutes, expires in enemy_soon[:15]:
+                st.write(f"• {name}: {minutes}分钟")
+                st.caption(f"  到期: {expires.strftime('%H:%M')}")
+        else:
+            st.caption("暂无敌方即将到期城池")
 
     st.divider()
 
@@ -663,11 +703,27 @@ with st.sidebar:
             st.session_state.data = {}
             st.session_state.selected.clear()
             st.session_state.single_selected_cell = None
+            st.session_state.recent_actions = []
             save_data({})
             st.rerun()
 
 # ========== 主界面 ==========
-st.title("🏰龙城争霸🐉")
+# 使用两列布局：标题和最近攻占记录
+title_col1, title_col2 = st.columns([2, 1])
+
+with title_col1:
+    st.title("🏰龙城争霸🐉")
+
+with title_col2:
+    st.markdown("### 📋 最近攻占")
+    if st.session_state.recent_actions:
+        for record in st.session_state.recent_actions[:5]:
+            time_str = datetime.fromisoformat(record['time']).strftime("%H:%M")
+            icon = "✅" if record.get('side') == 'friendly' else "❌" if record.get('side') == 'enemy' else "🗑️"
+            st.caption(f"{icon} {record['name']} - {record['action']} ({time_str})")
+    else:
+        st.caption("暂无攻占记录")
+
 st.caption(f"🕐 北京时间: {beijing_now().strftime('%Y-%m-%d %H:%M:%S')}")
 
 if not st.session_state.authenticated:
