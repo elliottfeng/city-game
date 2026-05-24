@@ -6,7 +6,7 @@ import hashlib
 import pytz
 import requests
 
-st.set_page_config(page_title="城池占领游戏", layout="wide")
+st.set_page_config(page_title="🏰龙城争霸🐉", layout="wide")
 
 
 # ========== 从 Streamlit Secrets 读取配置 ==========
@@ -667,7 +667,7 @@ with st.sidebar:
             st.rerun()
 
 # ========== 主界面 ==========
-st.title("🏰 城池占领游戏")
+st.title("🏰龙城争霸🐉")
 st.caption(f"🕐 北京时间: {beijing_now().strftime('%Y-%m-%d %H:%M:%S')}")
 
 if not st.session_state.authenticated:
